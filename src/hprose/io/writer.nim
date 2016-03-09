@@ -28,7 +28,7 @@ type
 
     RealWriterRefer = ref object of WriterRefer
         stream: Stream
-        references: Table[pointer, int]
+        references: CountTable[pointer]
         refcount: int
 
 method setRef(wr: WriterRefer, p: pointer) {.base, inline.} = discard
@@ -38,13 +38,13 @@ method resetRef(wr: WriterRefer) {.base, inline.} = discard
 proc newFakeWriterRefer(): FakeWriterRefer = new(result)
 
 method setRef(wr: RealWriterRefer, p: pointer) {.inline.} =
-    if p != nil: wr.references[p] = wr.refcount
     inc wr.refcount
+    if p != nil: wr.references[p] = wr.refcount
 
 method writeRef(wr: RealWriterRefer, p: pointer): bool {.inline.} =
     if p == nil: return false
     if wr.references.hasKey p:
-        var i = wr.references[p]
+        var i = wr.references[p] - 1
         wr.stream.write tag_ref
         wr.stream.write $i
         wr.stream.write tag_semicolon
@@ -52,7 +52,7 @@ method writeRef(wr: RealWriterRefer, p: pointer): bool {.inline.} =
     return false
 
 method resetRef(wr: RealWriterRefer) {.inline.} =
-    wr.references = initTable[pointer, int]();
+    wr.references = initCountTable[pointer]();
     wr.refcount = 0;
 
 proc newRealWriterRefer(stream: Stream): RealWriterRefer =
@@ -258,6 +258,20 @@ proc writeList[T](writer: Writer, value: T) =
         stream.write tag_openbrace
     stream.write tag_closebrace
 
+proc writeTable[T](writer: Writer, value: T) =
+    let stream = writer.stream
+    stream.write tag_map
+    let n = value.len
+    if n > 0:
+        stream.write $n
+        stream.write tag_openbrace
+        for k, v in value:
+            writer.serialize k
+            writer.serialize v
+    else:
+        stream.write tag_openbrace
+    stream.write tag_closebrace
+
 proc writeInternal[T](writer: Writer, value: T) {.inline.} =
     when T is SomeInteger: writer.writeInt value
     when T is SomeReal: writer.writeDouble value
@@ -268,6 +282,13 @@ proc writeInternal[T](writer: Writer, value: T) {.inline.} =
     when T is set: writer.writeList value, value.card
     when T is Queue|HashSet|OrderedSet: writer.writeList value, value.len
     when T is IntSet|SinglyLinkedList|DoublyLinkedList|SinglyLinkedRing|DoublyLinkedRing: writer.writeList value
+    when T is Table|OrderedTable|CountTable|TableRef|OrderedTableRef|CountTableRef: writer.writeTable value
+
+proc writeRef[T](writer: Writer, value: T) =
+    let p = cast[pointer](value)
+    if not writer.refer.writeRef p:
+        writer.refer.setRef p
+        writer.writeInternal value
 
 proc writeRefPtr[T](writer: Writer, value: ref T|ptr T) =
     when T is SomeInteger|SomeReal|bool|char:
@@ -310,6 +331,8 @@ proc serialize*[T](writer: Writer, value: T) =
             writer.writeNull
         else:
             writer.writeSeqWithRef value
+    elif T is TableRef|OrderedTableRef|CountTableRef:
+        writer.writeRef value
     else:
         writer.writeValue value
 
@@ -705,3 +728,51 @@ when defined(test):
             writer.serialize(ilist.addr)
             writer.serialize(ilist.addr)
             check StringStream(writer.stream).data == "a10{0123456789}r0;"
+        test "serialize Table[string, string]":
+            var writer = newWriter(newStringStream())
+            var table = initTable[string, string]()
+            table["firstName"] = "Jon"
+            table["lastName"] = "Ross"
+            writer.serialize(table)
+            writer.serialize(table)
+            check StringStream(writer.stream).data == "m2{s8\"lastName\"s4\"Ross\"s9\"firstName\"s3\"Jon\"}m2{r1;r2;r3;r4;}"
+        test "serialize TableRef[string, string]":
+            var writer = newWriter(newStringStream())
+            var table = newTable[string, string]()
+            table["firstName"] = "Jon"
+            table["lastName"] = "Ross"
+            writer.serialize(table)
+            writer.serialize(table)
+            check StringStream(writer.stream).data == "m2{s8\"lastName\"s4\"Ross\"s9\"firstName\"s3\"Jon\"}r0;"
+        test "serialize OrderedTable[string, string]":
+            var writer = newWriter(newStringStream())
+            var table = initOrderedTable[string, string]()
+            table["firstName"] = "Jon"
+            table["lastName"] = "Ross"
+            writer.serialize(table)
+            writer.serialize(table)
+            check StringStream(writer.stream).data == "m2{s9\"firstName\"s3\"Jon\"s8\"lastName\"s4\"Ross\"}m2{r1;r2;r3;r4;}"
+        test "serialize OrderedTableRef[string, string]":
+            var writer = newWriter(newStringStream())
+            var table = newOrderedTable[string, string]()
+            table["firstName"] = "Jon"
+            table["lastName"] = "Ross"
+            writer.serialize(table)
+            writer.serialize(table)
+            check StringStream(writer.stream).data == "m2{s9\"firstName\"s3\"Jon\"s8\"lastName\"s4\"Ross\"}r0;"
+        test "serialize CountTable[string]":
+            var writer = newWriter(newStringStream())
+            var table = initCountTable[string]()
+            table["firstName"] = 1
+            table["lastName"] = 2
+            writer.serialize(table)
+            writer.serialize(table)
+            check StringStream(writer.stream).data == "m2{s8\"lastName\"2s9\"firstName\"1}m2{r1;2r2;1}"
+        test "serialize CountTableRef[string]":
+            var writer = newWriter(newStringStream())
+            var table = newCountTable[string]()
+            table["firstName"] = 1
+            table["lastName"] = 2
+            writer.serialize(table)
+            writer.serialize(table)
+            check StringStream(writer.stream).data == "m2{s8\"lastName\"2s9\"firstName\"1}r0;"
