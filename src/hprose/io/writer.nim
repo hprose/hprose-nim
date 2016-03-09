@@ -89,11 +89,35 @@ proc writeInt*[T: SomeInteger](writer: Writer, value: T) {.inline.} =
     else:
         when T is int8|int16|int32|uint8|uint16:
             stream.write tag_integer
-        when T is int|int64:
+        elif T is int|int64:
             stream.write if T(low(int32)) <= value and value <= T(high(int32)): tag_integer else: tag_long
-        when T is uint|uint32|uint64:
+        elif T is uint|uint32|uint64:
             stream.write if value <= T(high(int32)): tag_integer else: tag_long
         stream.write $value
+        stream.write tag_semicolon
+
+proc writeRange[T: range](writer: Writer, value: T) {.inline.} =
+    let stream = writer.stream
+    let i = value.int64
+    if 0'i64 <= i and i <= 9'i64:
+        stream.write $i
+    else:
+        stream.write if int64(low(int32)) <= i and i <= int64(high(int32)): tag_integer else: tag_long
+        stream.write $i
+        stream.write tag_semicolon
+
+proc writeEnum[T: enum](writer: Writer, value: T) {.inline.} =
+    let stream = writer.stream
+    let i = ord(value)
+    if 0 <= i and i <= 9:
+        stream.write $i
+    else:
+        when T is enum:
+            when sizeof(value) <= 4:
+                stream.write tag_integer
+            else:
+                stream.write tag_long
+        stream.write $i
         stream.write tag_semicolon
 
 proc writeLong*[T: SomeInteger](writer: Writer, value: T) {.inline.} =
@@ -288,17 +312,32 @@ proc writeCritBitTree(writer: Writer, value: CritBitTree[void]) =
     stream.write tag_closebrace
 
 proc writeInternal[T](writer: Writer, value: T) {.inline.} =
-    when T is SomeInteger: writer.writeInt value
-    when T is SomeReal: writer.writeDouble value
-    when T is bool: writer.writeBool value
-    when T is char: writer.writeChar value
-    when T is TimeInfo: writer.writeDateTime value
-    when T is array: writer.writeArray value
-    when T is set: writer.writeList value, value.card
-    when T is Queue|HashSet|OrderedSet: writer.writeList value, value.len
-    when T is Slice|IntSet|SinglyLinkedList|DoublyLinkedList|SinglyLinkedRing|DoublyLinkedRing: writer.writeList value
-    when T is Table|OrderedTable|CountTable|TableRef|OrderedTableRef|CountTableRef: writer.writeTable value
-    when T is CritBitTree: writer.writeCritBitTree value
+    when T is enum:
+        writer.writeEnum value
+    elif T is range:
+        writer.writeRange value
+    elif T is SomeInteger:
+        writer.writeInt value
+    elif T is SomeReal:
+        writer.writeDouble value
+    elif T is bool:
+        writer.writeBool value
+    elif T is char:
+        writer.writeChar value
+    elif T is TimeInfo:
+        writer.writeDateTime value
+    elif T is array:
+        writer.writeArray value
+    elif T is set:
+        writer.writeList value, value.card
+    elif T is Queue|HashSet|OrderedSet:
+        writer.writeList value, value.len
+    elif T is Slice|IntSet|SinglyLinkedList|DoublyLinkedList|SinglyLinkedRing|DoublyLinkedRing:
+        writer.writeList value
+    elif T is Table|OrderedTable|CountTable|TableRef|OrderedTableRef|CountTableRef:
+        writer.writeTable value
+    elif T is CritBitTree:
+        writer.writeCritBitTree value
 
 proc writeRef[T](writer: Writer, value: T) =
     let p = cast[pointer](value)
@@ -422,6 +461,28 @@ when defined(test):
             var writer = newWriter(newStringStream())
             writer.serialize(low(int64))
             check StringStream(writer.stream).data == 'l' & $low(int64) & ';'
+        test "serialize range[0..8]":
+            var writer = newWriter(newStringStream())
+            var x: range[0..8] = 8
+            writer.serialize(x)
+            check StringStream(writer.stream).data == "8"
+        test "serialize enum":
+            type Direction = enum
+                north, east, south, west
+            var writer = newWriter(newStringStream())
+            writer.serialize(Direction.north)
+            writer.serialize(Direction.east)
+            writer.serialize(Direction.south)
+            writer.serialize(Direction.west)
+            check StringStream(writer.stream).data == "0123"
+        test "serialize enum":
+            type Color = enum
+                blue = 0x0000FF00, green = 0x00FF0000, red = 0xFF000000
+            var writer = newWriter(newStringStream())
+            writer.serialize(Color.red)
+            writer.serialize(Color.green)
+            writer.serialize(Color.blue)
+            check StringStream(writer.stream).data == "i-16777216;i16711680;i65280;"
         test "serialize(NaN)":
             var writer = newWriter(newStringStream())
             writer.serialize(NaN)
