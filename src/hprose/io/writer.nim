@@ -212,17 +212,20 @@ proc writeStringInternal(writer: Writer, value: string, n: int) {.inline.} =
         stream.write tag_quote
     stream.write tag_quote
 
+proc writeStringInternal(writer: Writer, value: string) {.inline.} =
+    let n = value.ulen
+    if n == -1:
+        writer.writeBytesInternal value
+    else:
+        writer.writeStringInternal value, n
+
 proc writeBytes*(writer: Writer, value: string) {.inline.} =
     writer.refer.setRef cast[pointer](value)
     writer.writeBytesInternal value
 
 proc writeString*(writer: Writer, value: string) {.inline.} =
     writer.refer.setRef cast[pointer](value)
-    let n = value.ulen
-    if n == -1:
-        writer.writeBytesInternal value
-    else:
-        writer.writeStringInternal value, n
+    writer.writeStringInternal value
 
 proc writeBytesWithRef*(writer: Writer, value: string) {.inline.} =
     if not writer.refer.writeRef cast[pointer](value): writer.writeBytes value
@@ -252,6 +255,9 @@ proc writeSeq[T](writer: Writer, value: seq[T]) {.inline.} =
 proc writeSeq(writer: Writer, value: seq[byte]) {.inline.} =
     writer.writeBytesInternal cast[string](value)
 
+proc writeSeq(writer: Writer, value: seq[char]) {.inline.} =
+    writer.writeStringInternal cast[string](value)
+
 proc writeSeqWithRef*[T](writer: Writer, value: seq[T]) {.inline.} =
     let p = cast[pointer](value)
     if not writer.refer.writeRef p:
@@ -263,6 +269,18 @@ proc writeArray[I, T](writer: Writer, value: array[I, T]) {.inline.} =
 
 proc writeArray[I](writer: Writer, value: array[I, byte]) {.inline.} =
     writer.writeBytesInternal cast[string](@value)
+
+proc writeArray[I](writer: Writer, value: array[I, char]) {.inline.} =
+    writer.writeStringInternal cast[string](@value)
+
+proc writeOpenArray[T](writer: Writer, value: openArray[T]) {.inline.} =
+    writer.writeList value, value.len
+
+proc writeOpenArray(writer: Writer, value: openArray[byte]) {.inline.} =
+    writer.writeBytesInternal cast[string](@value)
+
+proc writeOpenArray(writer: Writer, value: openArray[char]) {.inline.} =
+    writer.writeStringInternal cast[string](@value)
 
 proc writeList[T](writer: Writer, value: T) =
     var stream = writer.stream
@@ -328,6 +346,8 @@ proc writeInternal[T](writer: Writer, value: T) {.inline.} =
         writer.writeDateTime value
     elif T is array:
         writer.writeArray value
+    elif T is openArray:
+        writer.writeOpenArray value
     elif T is set:
         writer.writeList value, value.card
     elif T is Queue|HashSet|OrderedSet:
@@ -466,7 +486,7 @@ when defined(test):
             var x: range[0..8] = 8
             writer.serialize(x)
             check StringStream(writer.stream).data == "8"
-        test "serialize enum":
+        test "serialize enum Direction":
             type Direction = enum
                 north, east, south, west
             var writer = newWriter(newStringStream())
@@ -475,7 +495,7 @@ when defined(test):
             writer.serialize(Direction.south)
             writer.serialize(Direction.west)
             check StringStream(writer.stream).data == "0123"
-        test "serialize enum":
+        test "serialize enum Color":
             type Color = enum
                 blue = 0x0000FF00, green = 0x00FF0000, red = 0xFF000000
             var writer = newWriter(newStringStream())
@@ -603,6 +623,12 @@ when defined(test):
             writer.serialize(bseq)
             writer.serialize(bseq)
             check StringStream(writer.stream).data == "b9\"\x01\x02\x03\x04\x05\x06\x07\x08\x09\"r0;"
+        test "serialize seq[char]":
+            var writer = newWriter(newStringStream())
+            var cseq = @['H', 'e', 'l', 'l', 'o']
+            writer.serialize(cseq)
+            writer.serialize(cseq)
+            check StringStream(writer.stream).data == "s5\"Hello\"r0;"
         test "serialize empty seq[byte]":
             var writer = newWriter(newStringStream())
             var eseq:seq[byte] = @[]
@@ -621,12 +647,42 @@ when defined(test):
             writer.serialize(iarray)
             writer.serialize(iarray)
             check StringStream(writer.stream).data == "a9{123456789}a9{123456789}"
+        test "serialize openArray[int]":
+            var writer = newWriter(newStringStream())
+            var iarray = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+            proc testOpenArray(a: openArray[int]) =
+                writer.serialize(a)
+                writer.serialize(a)
+            testOpenArray(iarray)
+            check StringStream(writer.stream).data == "a9{123456789}a9{123456789}"
         test "serialize array[byte]":
             var writer = newWriter(newStringStream())
             var barray = [1'u8, 2'u8, 3'u8, 4'u8, 5'u8, 6'u8, 7'u8, 8'u8, 9'u8]
             writer.serialize(barray)
             writer.serialize(barray)
             check StringStream(writer.stream).data == "b9\"\x01\x02\x03\x04\x05\x06\x07\x08\x09\"b9\"\x01\x02\x03\x04\x05\x06\x07\x08\x09\""
+        test "serialize openArray[byte]":
+            var writer = newWriter(newStringStream())
+            var barray = [1'u8, 2'u8, 3'u8, 4'u8, 5'u8, 6'u8, 7'u8, 8'u8, 9'u8]
+            proc testOpenArray(a: openArray[byte]) =
+                writer.serialize(a)
+                writer.serialize(a)
+            testOpenArray(barray)
+            check StringStream(writer.stream).data == "b9\"\x01\x02\x03\x04\x05\x06\x07\x08\x09\"b9\"\x01\x02\x03\x04\x05\x06\x07\x08\x09\""
+        test "serialize array[char]":
+            var writer = newWriter(newStringStream())
+            var carray = ['H', 'e', 'l', 'l', 'o']
+            writer.serialize(carray)
+            writer.serialize(carray)
+            check StringStream(writer.stream).data == "s5\"Hello\"s5\"Hello\""
+        test "serialize openArray[char]":
+            var writer = newWriter(newStringStream())
+            var carray = ['H', 'e', 'l', 'l', 'o']
+            proc testOpenArray(a: openArray[char]) =
+                writer.serialize(a)
+                writer.serialize(a)
+            testOpenArray(carray)
+            check StringStream(writer.stream).data == "s5\"Hello\"s5\"Hello\""
         test "serialize set[int8]":
             var writer = newWriter(newStringStream())
             var iset = {0'i8..9'i8}
