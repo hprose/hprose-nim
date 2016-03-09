@@ -18,7 +18,7 @@
 #                                                          #
 ############################################################
 
-import typeinfo, tables, sets, lists, queues, intsets, streams, times
+import typeinfo, tables, sets, lists, queues, intsets, critbits, streams, times
 import tags
 
 type
@@ -272,6 +272,21 @@ proc writeTable[T](writer: Writer, value: T) =
         stream.write tag_openbrace
     stream.write tag_closebrace
 
+proc writeCritBitTree[T](writer: Writer, value: CritBitTree[T]) =
+    writer.writeTable value
+
+proc writeCritBitTree(writer: Writer, value: CritBitTree[void]) =
+    let stream = writer.stream
+    stream.write tag_list
+    let n = value.len
+    if n > 0:
+        stream.write $n
+        stream.write tag_openbrace
+        for e in value: writer.writeStringWithRef e
+    else:
+        stream.write tag_openbrace
+    stream.write tag_closebrace
+
 proc writeInternal[T](writer: Writer, value: T) {.inline.} =
     when T is SomeInteger: writer.writeInt value
     when T is SomeReal: writer.writeDouble value
@@ -283,6 +298,7 @@ proc writeInternal[T](writer: Writer, value: T) {.inline.} =
     when T is Queue|HashSet|OrderedSet: writer.writeList value, value.len
     when T is IntSet|SinglyLinkedList|DoublyLinkedList|SinglyLinkedRing|DoublyLinkedRing: writer.writeList value
     when T is Table|OrderedTable|CountTable|TableRef|OrderedTableRef|CountTableRef: writer.writeTable value
+    when T is CritBitTree: writer.writeCritBitTree value
 
 proc writeRef[T](writer: Writer, value: T) =
     let p = cast[pointer](value)
@@ -776,3 +792,19 @@ when defined(test):
             writer.serialize(table)
             writer.serialize(table)
             check StringStream(writer.stream).data == "m2{s8\"lastName\"2s9\"firstName\"1}r0;"
+        test "serialize CritBitTree[string]":
+            var writer = newWriter(newStringStream())
+            var table = CritBitTree[string]()
+            table["firstName"] = "Jon"
+            table["lastName"] = "Ross"
+            writer.serialize(table)
+            writer.serialize(table)
+            check StringStream(writer.stream).data == "m2{s9\"firstName\"s3\"Jon\"s8\"lastName\"s4\"Ross\"}m2{r1;r2;r3;r4;}"
+        test "serialize CritBitTree[void]":
+            var writer = newWriter(newStringStream())
+            var sset = CritBitTree[void]()
+            sset.incl "Hello"
+            sset.incl "World"
+            writer.serialize(sset)
+            writer.serialize(sset)
+            check StringStream(writer.stream).data == "a2{s5\"Hello\"s5\"World\"}a2{r1;r2;}"
