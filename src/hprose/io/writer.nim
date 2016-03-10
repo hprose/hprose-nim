@@ -1122,3 +1122,13 @@ when defined(test):
             writer.serialize(teacher)
             writer.serialize(teacher)
             check StringStream(writer.stream).data == "c7\"Teacher\"2{s4\"name\"s3\"age\"}o{s8\"Courtney\"i24;}r2;"
+        test "reset":
+            var writer = newWriter(newStringStream())
+            var teacher: Teacher
+            new(teacher)
+            teacher.name = "Courtney"
+            teacher.age = 24
+            writer.serialize(teacher)
+            writer.reset()
+            writer.serialize(teacher)
+            check StringStream(writer.stream).data == "c7\"Teacher\"2{s4\"name\"s3\"age\"}o{s8\"Courtney\"i24;}c7\"Teacher\"2{s4\"name\"s3\"age\"}o{s8\"Courtney\"i24;}"
