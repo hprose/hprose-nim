@@ -515,6 +515,18 @@ proc serialize*(writer: Writer, value: RootRef) {.inline.} = writer.writeNull
 
 when defined(test):
     import unittest
+    type
+        Student = object of RootObj
+            name: string
+            age: int
+
+        Teacher = ref object of RootObj
+            name: string
+            age: int
+
+    register[tuple[name: string, age: int, married: bool]]("Person")
+    register[Student]()
+
     suite "hprose.io.writer":
         echo "Writer:"
         test "serialize(nil)":
@@ -1068,3 +1080,45 @@ when defined(test):
             writer.serialize(person)
             writer.serialize(person)
             check StringStream(writer.stream).data == "m2{s4\"name\"s4\"Mark\"s3\"age\"i42;}r0;"
+        test "serialize registered tuple":
+            var writer = newWriter(newStringStream())
+            var person: tuple[name: string, age: int, married: bool] = ("Mark", 42, true)
+            writer.serialize(person)
+            writer.serialize(person)
+            check StringStream(writer.stream).data == "c6\"Person\"3{s4\"name\"s3\"age\"s7\"married\"}o{s4\"Mark\"i42;t}o{r4;i42;t}"
+        test "serialize registered ref tuple":
+            var writer = newWriter(newStringStream())
+            var person: ref tuple[name: string, age: int, married: bool];
+            new(person)
+            person.name = "Mark"
+            person.age =  42
+            person.married = true
+            writer.serialize(person)
+            writer.serialize(person)
+            check StringStream(writer.stream).data == "c6\"Person\"3{s4\"name\"s3\"age\"s7\"married\"}o{s4\"Mark\"i42;t}r3;"
+        test "serialize object Student":
+            var writer = newWriter(newStringStream())
+            var student: Student
+            student.name = "Yoyo"
+            student.age = 7
+            writer.serialize(student)
+            writer.serialize(student)
+            check StringStream(writer.stream).data == "c7\"Student\"2{s4\"name\"s3\"age\"}o{s4\"Yoyo\"7}o{r3;7}"
+        test "serialize ref object Student":
+            var writer = newWriter(newStringStream())
+            var student: ref Student
+            new(student)
+            student.name = "Yoyo"
+            student.age = 7
+            writer.serialize(student)
+            writer.serialize(student)
+            check StringStream(writer.stream).data == "c7\"Student\"2{s4\"name\"s3\"age\"}o{s4\"Yoyo\"7}r2;"
+        test "serialize ref object Teacher":
+            var writer = newWriter(newStringStream())
+            var teacher: Teacher
+            new(teacher)
+            teacher.name = "Courtney"
+            teacher.age = 24
+            writer.serialize(teacher)
+            writer.serialize(teacher)
+            check StringStream(writer.stream).data == "c7\"Teacher\"2{s4\"name\"s3\"age\"}o{s8\"Courtney\"i24;}r2;"
