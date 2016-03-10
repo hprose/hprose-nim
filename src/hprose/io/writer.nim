@@ -18,8 +18,8 @@
 #                                                          #
 ############################################################
 
-import typeinfo, tables, sets, lists, queues, intsets, critbits, streams, times
-import tags
+import typeinfo, tables, sets, lists, queues, intsets, critbits, strtabs, streams, times
+import tags, classmanager
 
 type
     WriterRefer = ref object of RootObj
@@ -64,8 +64,9 @@ type
     Writer* = ref object of RootObj
         stream*: Stream
         refer: WriterRefer
-        classref: Table[string, int]
+        classref: CountTable[string]
         crcount: int
+
 
 proc newWriter*(stream: Stream, simple: bool = false): Writer {.inline.} =
     new result
@@ -74,10 +75,12 @@ proc newWriter*(stream: Stream, simple: bool = false): Writer {.inline.} =
         result.refer = newFakeWriterRefer()
     else:
         result.refer = newRealWriterRefer stream
+    result.classref = initCountTable[string]()
+    result.crcount = 0
 
 proc reset*(writer: Writer) {.inline.} =
     writer.refer.reset
-    writer.classref = initTable[string, int]()
+    writer.classref = initCountTable[string]()
     writer.crcount = 0
 
 proc writeNull*(writer: Writer) {.inline.} = writer.stream.write tag_null
@@ -273,13 +276,13 @@ proc writeArray[I](writer: Writer, value: array[I, byte]) {.inline.} =
 proc writeArray[I](writer: Writer, value: array[I, char]) {.inline.} =
     writer.writeStringInternal cast[string](@value)
 
-proc writeOpenArray[T](writer: Writer, value: openArray[T]) {.inline.} =
+proc writeOpenArray[T](writer: Writer, value: openarray[T]) {.inline.} =
     writer.writeList value, value.len
 
-proc writeOpenArray(writer: Writer, value: openArray[byte]) {.inline.} =
+proc writeOpenArray(writer: Writer, value: openarray[byte]) {.inline.} =
     writer.writeBytesInternal cast[string](@value)
 
-proc writeOpenArray(writer: Writer, value: openArray[char]) {.inline.} =
+proc writeOpenArray(writer: Writer, value: openarray[char]) {.inline.} =
     writer.writeStringInternal cast[string](@value)
 
 proc writeList[T](writer: Writer, value: T) =
@@ -329,6 +332,87 @@ proc writeCritBitTree(writer: Writer, value: CritBitTree[void]) =
         stream.write tag_openbrace
     stream.write tag_closebrace
 
+proc count[T](value: T): int =
+    result = 0
+    when T is ref|ptr:
+        for field in value[].fields: inc result
+    else:
+        for field in value.fields: inc result
+
+proc writeClass[T](writer: Writer, value: T, name: string): int =
+    let stream = writer.stream
+    stream.write tag_class
+    stream.write $(name.ulen)
+    stream.write tag_quote
+    stream.write name
+    stream.write tag_quote
+    var n = count(value)
+    if n > 0:
+        stream.write $n
+    stream.write tag_openbrace
+    when T is ref|ptr:
+        for k, v in value[].fieldPairs: writer.writeString k
+    else:
+        for k, v in value.fieldPairs: writer.writeString k
+    stream.write tag_closebrace
+    let index = writer.crcount
+    inc writer.crcount
+    writer.classref[name] = writer.crcount
+    return index
+
+proc writeAnonymousObject[T](writer: Writer, value: T) =
+    let stream = writer.stream
+    when T is ref|ptr:
+        writer.refer.setRef cast[pointer](value)
+    else:
+        writer.refer.setRef nil
+    stream.write tag_map
+    var n = count(value)
+    if n > 0:
+        stream.write $n
+        stream.write tag_openbrace
+        when T is ref|ptr:
+            for k, v in value[].fieldPairs:
+                writer.serialize k
+                writer.serialize v
+        else:
+            for k, v in value.fieldPairs:
+                writer.serialize k
+                writer.serialize v
+    else:
+        stream.write tag_openbrace
+    stream.write tag_closebrace
+
+proc writeObject[T](writer: Writer, value: T, name: string) =
+    var index = writer.classref.getOrDefault name
+    if index > 0:
+        dec index
+    else:
+        index = writer.writeClass(value, name)
+    let stream = writer.stream
+    when T is ref|ptr:
+        writer.refer.setRef cast[pointer](value)
+    else:
+        writer.refer.setRef nil
+    stream.write tag_object
+    var n = count(value)
+    if n > 0:
+        stream.write tag_openbrace
+        when T is ref|ptr:
+            for v in value[].fields: writer.serialize v
+        else:
+            for v in value.fields: writer.serialize v
+    else:
+        stream.write tag_openbrace
+    stream.write tag_closebrace
+
+proc writeObject[T](writer: Writer, value: T) =
+    var name = classmanager.getAlias[T]()
+    if name.isNil:
+        writer.writeAnonymousObject value
+    else:
+        writer.writeObject value, name
+
 proc writeInternal[T](writer: Writer, value: T) {.inline.} =
     when T is enum:
         writer.writeEnum value
@@ -342,19 +426,19 @@ proc writeInternal[T](writer: Writer, value: T) {.inline.} =
         writer.writeBool value
     elif T is char:
         writer.writeChar value
-    elif T is TimeInfo:
-        writer.writeDateTime value
     elif T is array:
         writer.writeArray value
-    elif T is openArray:
+    elif T is openarray:
         writer.writeOpenArray value
     elif T is set:
         writer.writeList value, value.card
+    elif T is TimeInfo:
+        writer.writeDateTime value
     elif T is Queue|HashSet|OrderedSet:
         writer.writeList value, value.len
     elif T is Slice|IntSet|SinglyLinkedList|DoublyLinkedList|SinglyLinkedRing|DoublyLinkedRing:
         writer.writeList value
-    elif T is Table|OrderedTable|CountTable|TableRef|OrderedTableRef|CountTableRef:
+    elif T is Table|OrderedTable|CountTable|TableRef|OrderedTableRef|CountTableRef|StringTableRef:
         writer.writeTable value
     elif T is CritBitTree:
         writer.writeCritBitTree value
@@ -366,23 +450,41 @@ proc writeRef[T](writer: Writer, value: T) =
         writer.writeInternal value
 
 proc writeRefPtr[T](writer: Writer, value: ref T|ptr T) =
-    when T is SomeInteger|SomeReal|bool|char:
+    when T is enum|range|SomeInteger|SomeReal|bool|char:
         writer.writeInternal value[]
     else:
         let p = cast[pointer](value)
         if not writer.refer.writeRef p:
-            writer.refer.setRef p
-            writer.writeInternal value[]
+            when T is array|openarray|set|
+                      TimeInfo|Slice|Queue|
+                      HashSet|OrderedSet|IntSet|
+                      SinglyLinkedList|DoublyLinkedList|
+                      SinglyLinkedRing|DoublyLinkedRing|
+                      Table|OrderedTable|CountTable|CritBitTree:
+                writer.refer.setRef p
+                writer.writeInternal value[]
+            elif T is tuple|object:
+                writer.writeObject value
 
 proc writeValue[T](writer: Writer, value: T) =
-    when T is SomeInteger|SomeReal|bool|char:
+    when T is enum|range|SomeInteger|SomeReal|bool|char:
         writer.writeInternal value
     else:
-        writer.refer.setRef nil
-        writer.writeInternal value
+        when T is array|openarray|set|
+                  TimeInfo|Slice|Queue|
+                  HashSet|OrderedSet|IntSet|
+                  SinglyLinkedList|DoublyLinkedList|
+                  SinglyLinkedRing|DoublyLinkedRing|
+                  Table|OrderedTable|CountTable|CritBitTree:
+            writer.refer.setRef nil
+            writer.writeInternal value
+        elif T is tuple|object:
+            writer.writeObject value
 
 proc serialize*[T](writer: Writer, value: T) =
-    when T is ref|ptr:
+    when T is TableRef|OrderedTableRef|CountTableRef|StringTableRef:
+        writer.writeRef value
+    elif T is ref|ptr:
         if value.isNil:
             writer.writeNull
         else:
@@ -406,8 +508,6 @@ proc serialize*[T](writer: Writer, value: T) =
             writer.writeNull
         else:
             writer.writeSeqWithRef value
-    elif T is TableRef|OrderedTableRef|CountTableRef:
-        writer.writeRef value
     else:
         writer.writeValue value
 
@@ -647,10 +747,10 @@ when defined(test):
             writer.serialize(iarray)
             writer.serialize(iarray)
             check StringStream(writer.stream).data == "a9{123456789}a9{123456789}"
-        test "serialize openArray[int]":
+        test "serialize openarray[int]":
             var writer = newWriter(newStringStream())
             var iarray = [1, 2, 3, 4, 5, 6, 7, 8, 9]
-            proc testOpenArray(a: openArray[int]) =
+            proc testOpenArray(a: openarray[int]) =
                 writer.serialize(a)
                 writer.serialize(a)
             testOpenArray(iarray)
@@ -661,10 +761,10 @@ when defined(test):
             writer.serialize(barray)
             writer.serialize(barray)
             check StringStream(writer.stream).data == "b9\"\x01\x02\x03\x04\x05\x06\x07\x08\x09\"b9\"\x01\x02\x03\x04\x05\x06\x07\x08\x09\""
-        test "serialize openArray[byte]":
+        test "serialize openarray[byte]":
             var writer = newWriter(newStringStream())
             var barray = [1'u8, 2'u8, 3'u8, 4'u8, 5'u8, 6'u8, 7'u8, 8'u8, 9'u8]
-            proc testOpenArray(a: openArray[byte]) =
+            proc testOpenArray(a: openarray[byte]) =
                 writer.serialize(a)
                 writer.serialize(a)
             testOpenArray(barray)
@@ -675,10 +775,10 @@ when defined(test):
             writer.serialize(carray)
             writer.serialize(carray)
             check StringStream(writer.stream).data == "s5\"Hello\"s5\"Hello\""
-        test "serialize openArray[char]":
+        test "serialize openarray[char]":
             var writer = newWriter(newStringStream())
             var carray = ['H', 'e', 'l', 'l', 'o']
-            proc testOpenArray(a: openArray[char]) =
+            proc testOpenArray(a: openarray[char]) =
                 writer.serialize(a)
                 writer.serialize(a)
             testOpenArray(carray)
@@ -947,3 +1047,24 @@ when defined(test):
             writer.serialize(sset)
             writer.serialize(sset)
             check StringStream(writer.stream).data == "a2{s5\"Hello\"s5\"World\"}a2{r1;r2;}"
+        test "serialize StringTableRef":
+            var writer = newWriter(newStringStream())
+            var table = newStringTable("firstName", "Jon", "lastName", "Ross", modeCaseInsensitive)
+            writer.serialize(table)
+            writer.serialize(table)
+            check StringStream(writer.stream).data == "m2{s8\"lastName\"s4\"Ross\"s9\"firstName\"s3\"Jon\"}r0;"
+        test "serialize tuple":
+            var writer = newWriter(newStringStream())
+            var person: tuple[name: string, age: int] = ("Mark", 42)
+            writer.serialize(person)
+            writer.serialize(person)
+            check StringStream(writer.stream).data == "m2{s4\"name\"s4\"Mark\"s3\"age\"i42;}m2{r1;r2;r3;i42;}"
+        test "serialize ref tuple":
+            var writer = newWriter(newStringStream())
+            var person: ref tuple[name: string, age: int]
+            new(person)
+            person.name = "Mark"
+            person.age = 42
+            writer.serialize(person)
+            writer.serialize(person)
+            check StringStream(writer.stream).data == "m2{s4\"name\"s4\"Mark\"s3\"age\"i42;}r0;"
