@@ -13,7 +13,7 @@
 #                                                          #
 # hprose writer for Nim                                    #
 #                                                          #
-# LastModified: Mar 9, 2016                                #
+# LastModified: Mar 10, 2016                               #
 # Author: Ma Bingyao <andot@hprose.com>                    #
 #                                                          #
 ############################################################
@@ -266,6 +266,29 @@ proc writeStringWithRef*(writer: Writer, value: string) {.inline.} =
 
 proc writeStringWithRef*(writer: Writer, value: cstring) {.inline.} =
     writeStringWithRef(writer, $value)
+
+when declared(NimString):
+    proc writeWideCStringInternal(writer: Writer, value: WideCString) {.inline.} =
+        let stream = writer.stream
+        stream.write tag_bytes
+        var n = value.len
+        if n > 0:
+            stream.write $n
+            stream.write tag_quote
+            stream.write $value
+        else:
+            stream.write tag_quote
+        stream.write tag_quote
+
+    proc writeWideCString*(writer: Writer, value: WideCString) {.inline.} =
+        writer.refer.setRef cast[pointer](value)
+        writer.writeWideCStringInternal value
+
+    proc writeWideCStringWithRef*(writer: Writer, value: WideCString) {.inline.} =
+        if not writer.refer.writeRef cast[pointer](value):
+            writer.refer.setRef cast[pointer](value)
+            writer.writeWideCStringInternal value
+
 
 proc writeList[T](writer: Writer, value: T, n: int) =
     let stream = writer.stream
@@ -539,6 +562,9 @@ proc serialize*[T](writer: Writer, value: T) =
         writer.writeValue value
 
 proc serialize*(writer: Writer, value: RootRef) {.inline.} = writer.writeNull
+
+when declared(NimString):
+    proc serialize*(writer: Writer, value: WideCString) {.inline.} = writer.writeWideCStringWithRef value
 
 when defined(test):
     import unittest
