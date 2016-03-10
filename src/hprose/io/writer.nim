@@ -18,7 +18,7 @@
 #                                                          #
 ############################################################
 
-import typeinfo, tables, sets, lists, queues, intsets, critbits, strtabs, streams, times
+import tables, sets, lists, queues, intsets, critbits, strtabs, streams, times
 import tags, classmanager
 
 type
@@ -192,6 +192,8 @@ proc ulen(s: string): int =
     if i > n: return -1
     inc result
 
+proc ulen(cs: cstring): int {.inline.} = ulen($cs)
+
 proc writeBytesInternal(writer: Writer, value: string) {.inline.} =
     let stream = writer.stream
     stream.write tag_bytes
@@ -204,6 +206,9 @@ proc writeBytesInternal(writer: Writer, value: string) {.inline.} =
         stream.write tag_quote
     stream.write tag_quote
 
+proc writeBytesInternal(writer: Writer, value: cstring) {.inline.} =
+    writeBytesInternal(writer, $value)
+
 proc writeStringInternal(writer: Writer, value: string, n: int) {.inline.} =
     let stream = writer.stream
     stream.write tag_string
@@ -215,6 +220,9 @@ proc writeStringInternal(writer: Writer, value: string, n: int) {.inline.} =
         stream.write tag_quote
     stream.write tag_quote
 
+proc writeStringInternal(writer: Writer, value: cstring, n: int) {.inline.} =
+    writeStringInternal(writer, $value, n)
+
 proc writeStringInternal(writer: Writer, value: string) {.inline.} =
     let n = value.ulen
     if n == -1:
@@ -222,24 +230,42 @@ proc writeStringInternal(writer: Writer, value: string) {.inline.} =
     else:
         writer.writeStringInternal value, n
 
+proc writeStringInternal(writer: Writer, value: cstring) {.inline.} =
+    writeStringInternal(writer, $value)
+
 proc writeBytes*(writer: Writer, value: string) {.inline.} =
     writer.refer.setRef cast[pointer](value)
     writer.writeBytesInternal value
+
+proc writeBytes*(writer: Writer, value: cstring) {.inline.} =
+    writeBytes(writer, $value)
 
 proc writeString*(writer: Writer, value: string) {.inline.} =
     writer.refer.setRef cast[pointer](value)
     writer.writeStringInternal value
 
+proc writeString*(writer: Writer, value: cstring) {.inline.} =
+    writeString(writer, $value)
+
 proc writeBytesWithRef*(writer: Writer, value: string) {.inline.} =
     if not writer.refer.writeRef cast[pointer](value): writer.writeBytes value
+
+proc writeBytesWithRef*(writer: Writer, value: cstring) {.inline.} =
+    writeBytesWithRef(writer, $value)
 
 proc writeStringWithRef(writer: Writer, value: string, n: int) {.inline.} =
     if not writer.refer.writeRef cast[pointer](value):
         writer.refer.setRef cast[pointer](value)
         writer.writeStringInternal value, n
 
+proc writeStringWithRef(writer: Writer, value: cstring, n: int) {.inline.} =
+    writeStringWithRef(writer, $value, n)
+
 proc writeStringWithRef*(writer: Writer, value: string) {.inline.} =
     if not writer.refer.writeRef cast[pointer](value): writer.writeString value
+
+proc writeStringWithRef*(writer: Writer, value: cstring) {.inline.} =
+    writeStringWithRef(writer, $value)
 
 proc writeList[T](writer: Writer, value: T, n: int) =
     let stream = writer.stream
@@ -490,7 +516,7 @@ proc serialize*[T](writer: Writer, value: T) =
             writer.writeNull
         else:
             writer.writeRefPtr value
-    elif T is string:
+    elif T is string|cstring:
         if value.isNil:
             writer.writeNull
         else:
@@ -655,6 +681,11 @@ when defined(test):
         test "serialize(\"Hello World!\")":
             var writer = newWriter(newStringStream())
             writer.serialize("Hello World!")
+            check StringStream(writer.stream).data == "s12\"Hello World!\""
+        test "serialize cstring":
+            var writer = newWriter(newStringStream())
+            var cs: cstring = "Hello World!"
+            writer.serialize(cs)
             check StringStream(writer.stream).data == "s12\"Hello World!\""
         test "serialize string ref":
             var writer = newWriter(newStringStream())
