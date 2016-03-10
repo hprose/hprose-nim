@@ -159,7 +159,7 @@ proc writeChar(writer: Writer, value: char) {.inline.} =
         stream.write value
         stream.write tag_quote
 
-proc writeDateTime*(writer: Writer, value: TimeInfo) {.inline.} =
+proc writeDateTime(writer: Writer, value: TimeInfo) {.inline.} =
     if value.year < 0: raise newException(RangeError, "Years BC is not supported in hprose.")
     if value.year > 9999: raise newException(RangeError, "Year after 9999 is not supported in hprose.")
     let stream = writer.stream
@@ -252,20 +252,21 @@ proc writeList[T](writer: Writer, value: T, n: int) =
         stream.write tag_openbrace
     stream.write tag_closebrace
 
-proc writeSeq[T](writer: Writer, value: seq[T]) {.inline.} =
+proc writeSeqInternal[T](writer: Writer, value: seq[T]) {.inline.} =
     writer.writeList value, value.xlen
 
-proc writeSeq(writer: Writer, value: seq[byte]) {.inline.} =
+proc writeSeqInternal(writer: Writer, value: seq[byte]) {.inline.} =
     writer.writeBytesInternal cast[string](value)
 
-proc writeSeq(writer: Writer, value: seq[char]) {.inline.} =
+proc writeSeqInternal(writer: Writer, value: seq[char]) {.inline.} =
     writer.writeStringInternal cast[string](value)
 
+proc writeSeq*[T](writer: Writer, value: seq[T]) {.inline.} =
+    writer.refer.setRef cast[pointer](value)
+    writer.writeSeqInternal value
+
 proc writeSeqWithRef*[T](writer: Writer, value: seq[T]) {.inline.} =
-    let p = cast[pointer](value)
-    if not writer.refer.writeRef p:
-        writer.refer.setRef p
-        writer.writeSeq value
+    if not writer.refer.writeRef cast[pointer](value): writer.writeSeq value
 
 proc writeArray[I, T](writer: Writer, value: array[I, T]) {.inline.} =
     writer.writeList value, value.len
