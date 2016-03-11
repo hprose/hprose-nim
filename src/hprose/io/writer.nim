@@ -519,17 +519,16 @@ proc writeRefPtr[T](writer: Writer, value: ref T|ptr T) =
 proc writeValue[T](writer: Writer, value: T) =
     when T is enum|range|SomeInteger|SomeReal|bool|char:
         writer.writeInternal value
-    else:
-        when T is array|openarray|set|
-                  TimeInfo|Slice|Queue|
-                  HashSet|OrderedSet|IntSet|
-                  SinglyLinkedList|DoublyLinkedList|
-                  SinglyLinkedRing|DoublyLinkedRing|
-                  Table|OrderedTable|CountTable|CritBitTree:
-            writer.refer.setRef nil
-            writer.writeInternal value
-        elif T is tuple|object:
-            writer.writeObject value
+    elif T is array|openarray|set|
+              TimeInfo|Slice|Queue|
+              HashSet|OrderedSet|IntSet|
+              SinglyLinkedList|DoublyLinkedList|
+              SinglyLinkedRing|DoublyLinkedRing|
+              Table|OrderedTable|CountTable|CritBitTree:
+        writer.refer.setRef nil
+        writer.writeInternal value
+    elif T is tuple|object:
+        writer.writeObject value
 
 proc serialize*[T](writer: Writer, value: T) =
     when T is TableRef|OrderedTableRef|CountTableRef|StringTableRef:
