@@ -13,7 +13,7 @@
 #                                                          #
 # hprose writer for Nim                                    #
 #                                                          #
-# LastModified: Mar 10, 2016                               #
+# LastModified: Mar 12, 2016                               #
 # Author: Ma Bingyao <andot@hprose.com>                    #
 #                                                          #
 ############################################################
@@ -35,7 +35,7 @@ method setRef(wr: WriterRefer, p: pointer) {.base, inline.} = discard
 method writeRef(wr: WriterRefer, p: pointer): bool {.base, inline.} = false
 method resetRef(wr: WriterRefer) {.base, inline.} = discard
 
-proc newFakeWriterRefer(): FakeWriterRefer = new(result)
+proc newFakeWriterRefer(): FakeWriterRefer = new result
 
 method setRef(wr: RealWriterRefer, p: pointer) {.inline.} =
     inc wr.refcount
@@ -71,10 +71,7 @@ type
 proc newWriter*(stream: Stream, simple: bool = false): Writer {.inline.} =
     new result
     result.stream = stream
-    if simple:
-        result.refer = newFakeWriterRefer()
-    else:
-        result.refer = newRealWriterRefer stream
+    result.refer = if simple: newFakeWriterRefer() else: newRealWriterRefer(stream)
     result.classref = initCountTable[string]()
     result.crcount = 0
 
