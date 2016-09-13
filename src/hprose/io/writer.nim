@@ -511,7 +511,7 @@ proc writeRefPtr[T](writer: Writer, value: ref T|ptr T) =
                 writer.refer.setRef p
                 writer.writeInternal value[]
             elif T is tuple|object:
-                writer.writeObject value
+                writer.writeObject value[]
 
 proc writeValue[T](writer: Writer, value: T) =
     when T is enum|range|SomeInteger|SomeReal|bool|char:
@@ -561,6 +561,47 @@ proc serialize*(writer: Writer, value: RootRef) {.inline.} = writer.writeNull
 
 when declared(NimString):
     proc serialize*(writer: Writer, value: WideCString) {.inline.} = writer.writeWideCStringWithRef value
+
+when defined(benchmark):
+    import nimbench
+
+    bench(serialize(nil), m):
+        var writer = newWriter(newStringStream())
+        for i in 1..m:
+            writer.serialize(nil)
+    
+    bench(serialize(0), m):
+        var writer = newWriter(newStringStream())
+        for i in 1..m:
+            writer.serialize(0)
+    
+    bench(serialize(1), m):
+        var writer = newWriter(newStringStream())
+        for i in 1..m:
+            writer.serialize(1)
+    
+    bench(serialize(1'i8), m):
+        var writer = newWriter(newStringStream())
+        for i in 1..m:
+            writer.serialize(1'i8)
+    
+    bench(serialize(1'i16), m):
+        var writer = newWriter(newStringStream())
+        for i in 1..m:
+            writer.serialize(1'i16)
+    
+    bench(serialize(high(int32)), m):
+        var writer = newWriter(newStringStream())
+        for i in 1..m:
+            writer.serialize(high(int32))
+    
+    bench(serialize range[0..8], m):
+        var writer = newWriter(newStringStream())
+        var x: range[0..8] = 8
+        for i in 1..m:
+            writer.serialize(x)
+
+    runBenchmarks()
 
 when defined(test):
     import unittest
